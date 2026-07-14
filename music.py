@@ -88,7 +88,7 @@ async def play(ctx, *, query: str):
                 if 'entries' not in info or not info['entries']:
                     await ctx.send("No results found for that song!")
                     return
-                url = info['entries'][0]['url']
+                url = info['entries'][0].get('webpage_url', info['entries'][0].get('url'))
                 title = info['entries'][0]['title']
 
         # If nothing is playing, start immediately
