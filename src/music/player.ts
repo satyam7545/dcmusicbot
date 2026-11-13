@@ -1,6 +1,6 @@
 import { Player, type GuildQueue, type Track } from 'discord-player';
 import { DefaultExtractors } from '@discord-player/extractor';
-import { YoutubeExtractor } from 'discord-player-youtubei';
+import { YoutubeiExtractor } from 'discord-player-youtubei';
 import { client } from '../bot/client';
 import { config } from '../config';
 import { createMusicEmbed } from '../bot/components/musicEmbed';
@@ -122,10 +122,10 @@ export async function initPlayer() {
   
   // Register YouTube extractor
   try {
-    await player.extractors.register(YoutubeExtractor, {});
+    await player.extractors.register(YoutubeiExtractor, {});
     console.log('[Harmonix Music] YouTube extractor registered successfully');
   } catch (err) {
-    console.warn('[Harmonix Music] Could not register YoutubeExtractor:', err);
+    console.warn('[Harmonix Music] Could not register YoutubeiExtractor:', err);
   }
 
   // Register DefaultExtractors (Spotify, SoundCloud, Apple Music, etc.)

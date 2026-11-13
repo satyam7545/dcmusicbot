@@ -2,14 +2,24 @@ import http from 'http';
 import { createExpressApp } from './server/app';
 import { initSocket } from './server/socket';
 import { client } from './bot/client';
-import { initPlayer } from './music/player';
+import { initPlayer, player } from './music/player';
 import { handleInteraction } from './bot/events/interactionCreate';
 import { config, validateConfig } from './config';
 import { deployCommands } from './bot/deploy-commands';
 
+// Production Process Resilience: Prevent process termination on transient stream or voice gateway errors
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Process Safety] Unhandled Promise Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[Process Safety] Uncaught Exception:', error);
+});
+
 async function bootstrap() {
   console.log('══════════════════════════════════════════════════════════════');
   console.log('          HARMONIX - DISCORD MUSIC BOT & WEB DASHBOARD        ');
+  console.log(`          Environment: ${config.nodeEnv.toUpperCase()}       `);
   console.log('══════════════════════════════════════════════════════════════');
 
   // 1. Initialize Express & HTTP Server
@@ -27,8 +37,8 @@ async function bootstrap() {
 
   // 5. Start HTTP & WebSocket Server
   httpServer.listen(config.port, () => {
-    console.log(`[Harmonix Web] Dashboard & API Server live at: http://localhost:${config.port}`);
-    console.log(`[Harmonix Web] WebSocket Gateway listening on ws://localhost:${config.port}`);
+    console.log(`[Harmonix Web] Dashboard & API Server live at: ${config.dashboardUrl}`);
+    console.log(`[Harmonix Web] WebSocket Gateway listening on port ${config.port}`);
   });
 
   // 6. Connect Discord Bot
@@ -49,6 +59,28 @@ async function bootstrap() {
     console.warn('[Discord Bot] You can add your Discord Bot Token to .env anytime.');
     console.warn('[Discord Bot] The Web Dashboard is fully functional and ready for testing!');
   }
+
+  // Graceful Shutdown
+  const shutdown = async (signal: string) => {
+    console.log(`\n[Process] Received ${signal}. Gracefully shutting down Harmonix...`);
+    try {
+      // Disconnect all voice connections
+      for (const [, queue] of player.nodes.cache) {
+        queue.delete();
+      }
+      await client.destroy();
+      httpServer.close(() => {
+        console.log('[Process] HTTP server closed.');
+        process.exit(0);
+      });
+    } catch (e) {
+      console.error('[Process] Error during shutdown:', e);
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 bootstrap().catch((err) => {

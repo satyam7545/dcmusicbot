@@ -2,25 +2,26 @@ import { Router } from 'express';
 import { client } from '../../bot/client';
 import { player, broadcastGuildState, getGuildPlayerState, fetchLyrics } from '../../music/player';
 import { QueueRepeatMode } from 'discord-player';
+import { requireAuth, requireGuildAccess } from '../middleware/auth';
 
 export const playerRouter = Router();
 
-function requireAuth(req: any, res: any, next: any) {
-  if (!req.session?.user) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-}
-
+// Apply authentication and strict guild access control
 playerRouter.use(requireAuth);
+playerRouter.use('/:guildId', requireGuildAccess);
 
 // 1. Play / Enqueue Track or Playlist from Dashboard
 playerRouter.post('/:guildId/play', async (req, res) => {
   const { guildId } = req.params;
   const { query, voiceChannelId } = req.body;
 
-  if (!query) {
-    return res.status(400).json({ error: 'Missing query or URL parameter' });
+  if (!query || typeof query !== 'string' || query.trim().length === 0) {
+    return res.status(400).json({ error: 'Missing or invalid query string' });
+  }
+
+  // Prevent absurdly long string attacks
+  if (query.length > 1000) {
+    return res.status(400).json({ error: 'Query exceeds maximum allowed length' });
   }
 
   // Demo fallback
@@ -34,11 +35,11 @@ playerRouter.post('/:guildId/play', async (req, res) => {
   }
 
   try {
-    let targetChannel = guild.channels.cache.get(voiceChannelId);
+    let targetChannel = voiceChannelId ? guild.channels.cache.get(voiceChannelId) : null;
     if (!targetChannel) {
       // Find active queue channel or any populated voice channel
       const queue = player.nodes.get(guildId);
-      targetChannel = queue?.channel || guild.channels.cache.find((c) => c.isVoiceBased());
+      targetChannel = queue?.channel || guild.channels.cache.find((c: any) => c.isVoiceBased());
     }
 
     if (!targetChannel || !targetChannel.isVoiceBased()) {
@@ -47,7 +48,7 @@ playerRouter.post('/:guildId/play', async (req, res) => {
       });
     }
 
-    const searchResult = await player.search(query, {
+    const searchResult = await player.search(query.trim(), {
       requestedBy: (req.session as any).user,
     });
 
@@ -129,7 +130,7 @@ playerRouter.post('/:guildId/previous', async (req, res) => {
     await queue.history.previous();
     broadcastGuildState(guildId);
     return res.json({ success: true });
-  } catch (err: any) {
+  } catch {
     return res.status(400).json({ error: 'No previous track in history' });
   }
 });
@@ -152,15 +153,19 @@ playerRouter.post('/:guildId/stop', (req, res) => {
 // 6. Seek Progress
 playerRouter.post('/:guildId/seek', async (req, res) => {
   const { guildId } = req.params;
-  const { timeMs } = req.body;
-  const queue = player.nodes.get(guildId);
+  const timeMs = Number(req.body.timeMs);
 
+  if (isNaN(timeMs) || timeMs < 0) {
+    return res.status(400).json({ error: 'Invalid timeMs parameter' });
+  }
+
+  const queue = player.nodes.get(guildId);
   if (!queue || !queue.currentTrack) {
     return res.status(404).json({ error: 'No active track to seek' });
   }
 
   try {
-    await queue.node.seek(Number(timeMs));
+    await queue.node.seek(timeMs);
     broadcastGuildState(guildId);
     return res.json({ success: true, progressMs: timeMs });
   } catch (err: any) {
@@ -171,26 +176,34 @@ playerRouter.post('/:guildId/seek', async (req, res) => {
 // 7. Adjust Volume
 playerRouter.post('/:guildId/volume', (req, res) => {
   const { guildId } = req.params;
-  const { volume } = req.body;
-  const queue = player.nodes.get(guildId);
+  const volume = Number(req.body.volume);
 
+  if (isNaN(volume) || volume < 0 || volume > 150) {
+    return res.status(400).json({ error: 'Volume must be a number between 0 and 150' });
+  }
+
+  const queue = player.nodes.get(guildId);
   if (!queue) {
     if ((req.session as any)?.user?.isDev) return res.json({ success: true, volume });
     return res.status(404).json({ error: 'No active player' });
   }
 
-  const vol = Math.max(0, Math.min(150, Number(volume) || 80));
-  queue.node.setVolume(vol);
+  queue.node.setVolume(volume);
   broadcastGuildState(guildId);
-  return res.json({ success: true, volume: vol });
+  return res.json({ success: true, volume });
 });
 
 // 8. Loop Mode Toggle
 playerRouter.post('/:guildId/loop', (req, res) => {
   const { guildId } = req.params;
-  const { mode } = req.body; // 'off' | 'track' | 'queue' | 'autoplay'
-  const queue = player.nodes.get(guildId);
+  const { mode } = req.body;
 
+  const validModes = ['off', 'track', 'queue', 'autoplay'];
+  if (!validModes.includes(mode)) {
+    return res.status(400).json({ error: 'Invalid loop mode' });
+  }
+
+  const queue = player.nodes.get(guildId);
   if (!queue) {
     if ((req.session as any)?.user?.isDev) return res.json({ success: true, mode });
     return res.status(404).json({ error: 'No active player' });
@@ -227,14 +240,18 @@ playerRouter.post('/:guildId/shuffle', (req, res) => {
 // 10. Remove Single Track from Queue
 playerRouter.delete('/:guildId/queue/:index', (req, res) => {
   const { guildId, index } = req.params;
-  const queue = player.nodes.get(guildId);
+  const idx = parseInt(index, 10);
 
+  if (isNaN(idx) || idx < 0) {
+    return res.status(400).json({ error: 'Invalid track index' });
+  }
+
+  const queue = player.nodes.get(guildId);
   if (!queue) {
     if ((req.session as any)?.user?.isDev) return res.json({ success: true });
     return res.status(404).json({ error: 'No active player' });
   }
 
-  const idx = parseInt(index, 10);
   const track = queue.tracks.at(idx);
   if (!track) {
     return res.status(404).json({ error: 'Track index out of range' });
@@ -263,17 +280,21 @@ playerRouter.post('/:guildId/queue/clear', (req, res) => {
 // 12. Move Track in Queue (Drag-and-Drop)
 playerRouter.post('/:guildId/queue/move', (req, res) => {
   const { guildId } = req.params;
-  const { from, to } = req.body;
-  const queue = player.nodes.get(guildId);
+  const from = parseInt(req.body.from, 10);
+  const to = parseInt(req.body.to, 10);
 
+  if (isNaN(from) || isNaN(to) || from < 0 || to < 0) {
+    return res.status(400).json({ error: 'Invalid from or to index' });
+  }
+
+  const queue = player.nodes.get(guildId);
   if (!queue) {
     if ((req.session as any)?.user?.isDev) return res.json({ success: true });
     return res.status(404).json({ error: 'No active player' });
   }
 
-  const track = queue.tracks.at(from);
-  if (!track) {
-    return res.status(404).json({ error: 'Track not found' });
+  if (from >= queue.tracks.size || to >= queue.tracks.size) {
+    return res.status(400).json({ error: 'Indices out of range' });
   }
 
   queue.node.swap(from, to);
@@ -284,9 +305,13 @@ playerRouter.post('/:guildId/queue/move', (req, res) => {
 // 13. Toggle Equalizer Filter
 playerRouter.post('/:guildId/filters', async (req, res) => {
   const { guildId } = req.params;
-  const { filter } = req.body; // e.g. 'bassboost', 'nightcore', 'clear'
-  const queue = player.nodes.get(guildId);
+  const { filter } = req.body;
 
+  if (!filter || typeof filter !== 'string') {
+    return res.status(400).json({ error: 'Missing filter name' });
+  }
+
+  const queue = player.nodes.get(guildId);
   if (!queue) {
     if ((req.session as any)?.user?.isDev) return res.json({ success: true, activeFilters: [filter] });
     return res.status(404).json({ error: 'No active player' });
@@ -318,7 +343,7 @@ playerRouter.get('/:guildId/lyrics', async (req, res) => {
       return res.json({
         title: 'Starboy',
         artist: 'The Weeknd',
-        lyrics: "I'm tryna put you in the worst mood, ah\nP1 cleaner than your church shoes, ah\nMilli point two just to hurt you, ah\nAll red Lamb' just to tease you, ah\nNone of these toys on lease too, ah\nMade your whole year in a week too, yah\nMain bitch out your league too, ah\nSide bitch out of your league too, ah...",
+        lyrics: "I'm tryna put you in the worst mood, ah\nP1 cleaner than your church shoes, ah...",
       });
     }
     return res.status(404).json({ error: 'No track playing' });

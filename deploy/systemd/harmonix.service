@@ -1,0 +1,23 @@
+[Unit]
+Description=Harmonix Discord Music Bot & Web Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/dcmusic
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PORT=3000
+StandardOutput=append:/home/ubuntu/dcmusic/logs/app.log
+StandardError=append:/home/ubuntu/dcmusic/logs/error.log
+
+# Security Sandboxing for Systemd
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

@@ -13,9 +13,11 @@ export const config = {
 
   // Server
   port: parseInt(process.env.PORT || '3000', 10),
-  dashboardUrl: process.env.DASHBOARD_URL || 'http://localhost:3000',
+  dashboardUrl: (process.env.DASHBOARD_URL || 'http://localhost:3000').replace(/\/$/, ''),
   sessionSecret: process.env.SESSION_SECRET || 'harmonix_music_bot_secret_session_key',
-  isDev: process.env.NODE_ENV !== 'production',
+  nodeEnv: process.env.NODE_ENV || 'development',
+  isProduction: process.env.NODE_ENV === 'production',
+  allowDevLogin: process.env.ALLOW_DEV_LOGIN === 'true' || process.env.NODE_ENV !== 'production',
 
   // YouTube cookie (optional)
   youtubeCookie: process.env.YOUTUBE_COOKIE || '',
@@ -25,7 +27,8 @@ export function validateConfig() {
   const missing: string[] = [];
   if (!config.discordToken) missing.push('DISCORD_TOKEN');
   if (!config.clientId) missing.push('DISCORD_CLIENT_ID');
-  
+  if (!config.clientSecret) missing.push('DISCORD_CLIENT_SECRET');
+
   return {
     isValid: missing.length === 0,
     missing,

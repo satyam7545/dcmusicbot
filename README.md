@@ -94,6 +94,14 @@ Open your browser to:
 
 ---
 
+## ☁️ Production Deployment (Google Cloud / Ubuntu Server)
+
+For deploying on a Google Cloud Compute Engine (GCP VM) or any Ubuntu Server instance with PM2, Docker, or Nginx with Let's Encrypt SSL, check out our step-by-step production guide:
+
+👉 **[deploy/GCP_UBUNTU_DEPLOYMENT_GUIDE.md](file:///c:/Users/satya/Documents/NIU/NIU/Projects/dcmusic/deploy/GCP_UBUNTU_DEPLOYMENT_GUIDE.md)**
+
+---
+
 ## 💬 Discord Slash Commands
 
 | Command | Description |

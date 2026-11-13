@@ -1,30 +1,47 @@
 import { Router } from 'express';
 import axios from 'axios';
+import crypto from 'crypto';
 import { config } from '../config';
 
 export const authRouter = Router();
 
-// 1. Redirect to Discord OAuth2
+// 1. Redirect to Discord OAuth2 with CSRF state token
 authRouter.get('/discord', (req, res) => {
   if (!config.clientId || !config.clientSecret) {
     return res.status(500).json({
       error: 'Discord OAuth credentials (DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET) not set in .env',
-      canDevLogin: true,
+      canDevLogin: config.allowDevLogin,
     });
   }
 
+  // Generate cryptographic state token to prevent OAuth CSRF attacks
+  const state = crypto.randomBytes(24).toString('hex');
+  (req.session as any).oauthState = state;
+
   const redirectUri = encodeURIComponent(`${config.dashboardUrl}/api/auth/callback`);
   const scope = encodeURIComponent('identify guilds');
-  const discordAuthUrl = `https://discord.com/oauth2/authorize?client_id=${config.clientId}&response_type=code&redirect_uri=${redirectUri}&scope=${scope}`;
-  
+  const discordAuthUrl = `https://discord.com/oauth2/authorize?client_id=${config.clientId}&response_type=code&redirect_uri=${redirectUri}&scope=${scope}&state=${state}`;
+
   return res.redirect(discordAuthUrl);
 });
 
-// 2. OAuth2 Callback
+// 2. OAuth2 Callback with State Nonce Verification
 authRouter.get('/callback', async (req, res) => {
   const code = req.query.code as string;
+  const state = req.query.state as string;
+  const sessionState = (req.session as any)?.oauthState;
+
+  // Clear state from session
+  delete (req.session as any).oauthState;
+
   if (!code) {
     return res.redirect(`${config.dashboardUrl}/?error=no_code`);
+  }
+
+  // Verify OAuth2 CSRF state token
+  if (!state || !sessionState || state !== sessionState) {
+    console.warn('[Security] Discord OAuth2 state mismatch or missing token');
+    return res.status(403).redirect(`${config.dashboardUrl}/?error=csrf_detected`);
   }
 
   try {
@@ -41,6 +58,7 @@ authRouter.get('/callback', async (req, res) => {
       params.toString(),
       {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 10000,
       }
     );
 
@@ -49,11 +67,13 @@ authRouter.get('/callback', async (req, res) => {
     // Fetch user details
     const userResponse = await axios.get('https://discord.com/api/users/@me', {
       headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 10000,
     });
 
     // Fetch user's guilds
     const guildsResponse = await axios.get('https://discord.com/api/users/@me/guilds', {
       headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 10000,
     });
 
     const discordUser = userResponse.data;
@@ -61,14 +81,19 @@ authRouter.get('/callback', async (req, res) => {
       ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
       : 'https://cdn.discordapp.com/embed/avatars/0.png';
 
-    // Store in session
+    // Store minimal required info in session
     (req.session as any).user = {
       id: discordUser.id,
       username: discordUser.username,
       discriminator: discordUser.discriminator || '0',
       avatar: avatarUrl,
-      accessToken,
-      guilds: guildsResponse.data,
+      guilds: (guildsResponse.data || []).map((g: any) => ({
+        id: g.id,
+        name: g.name,
+        icon: g.icon,
+        permissions: g.permissions,
+      })),
+      isDev: false,
     };
 
     return res.redirect(`${config.dashboardUrl}/dashboard`);
@@ -96,8 +121,14 @@ authRouter.get('/me', (req, res) => {
   });
 });
 
-// 4. Developer / Demo login (for testing when credentials are not configured yet)
+// 4. Developer / Demo login (Disabled in production unless explicitly enabled)
 authRouter.post('/dev-login', (req, res) => {
+  if (!config.allowDevLogin) {
+    return res.status(403).json({
+      error: 'Developer login is disabled in production environment.',
+    });
+  }
+
   (req.session as any).user = {
     id: 'dev_user_123',
     username: 'DemoCommander',
@@ -116,6 +147,7 @@ authRouter.post('/dev-login', (req, res) => {
 // 5. Logout
 authRouter.post('/logout', (req, res) => {
   req.session.destroy(() => {
+    res.clearCookie('connect.sid');
     res.json({ success: true });
   });
 });

@@ -3,16 +3,9 @@ import { client } from '../../bot/client';
 import { player, getGuildPlayerState } from '../../music/player';
 import type { UserGuild } from '../../shared/types';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { requireAuth } from '../middleware/auth';
 
 export const guildsRouter = Router();
-
-// Middleware: ensure authenticated
-function requireAuth(req: any, res: any, next: any) {
-  if (!req.session?.user) {
-    return res.status(401).json({ error: 'Unauthorized. Please login with Discord.' });
-  }
-  next();
-}
 
 guildsRouter.use(requireAuth);
 
